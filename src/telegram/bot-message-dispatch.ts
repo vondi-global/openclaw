@@ -1,5 +1,7 @@
+import { readFile } from "node:fs/promises";
+import * as path from "node:path";
 import type { Bot } from "grammy";
-import { resolveAgentDir } from "../agents/agent-scope.js";
+import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import {
   findModelInCatalog,
   loadModelCatalog,
@@ -744,8 +746,26 @@ export const dispatchTelegramMessage = async ({
         onModelSelected,
         onThinkingHeartbeat: async (elapsedMs: number) => {
           const mins = Math.round(elapsedMs / 60000);
-          const text =
+          let statusSnippet = "";
+          try {
+            const workspaceDir = resolveAgentWorkspaceDir(cfg, route.agentId);
+            const statusFile = path.join(workspaceDir, "OPENCLAW_TASK_STATUS.md");
+            const raw = await readFile(statusFile, "utf8");
+            const trimmed = raw.trim();
+            if (trimmed) {
+              // Take up to 3 lines to keep message compact
+              const lines = trimmed
+                .split("\n")
+                .filter((l) => l.trim())
+                .slice(0, 3);
+              statusSnippet = "\n\n" + lines.join("\n");
+            }
+          } catch {
+            // Status file absent or unreadable — non-fatal, use default text.
+          }
+          const base =
             mins <= 1 ? "Думаю... ещё немного." : `Думаю уже ${mins} мин, ещё работаю...`;
+          const text = base + statusSnippet;
           try {
             await sendMessageTelegram(String(chatId), text, {
               accountId: route.accountId,

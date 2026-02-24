@@ -1,3 +1,5 @@
+import { appendFile } from "node:fs/promises";
+import * as path from "node:path";
 import { applyQueueDropPolicy, shouldSkipQueueItem } from "../../../utils/queue-helpers.js";
 import { getExistingFollowupQueue, getFollowupQueue } from "./state.js";
 import type { FollowupRun, QueueDedupeMode, QueueSettings } from "./types.js";
@@ -53,6 +55,21 @@ export function enqueueFollowupRun(
   }
 
   queue.items.push(run);
+
+  // Variant C: if agent is actively running, also write message to OPENCLAW_INBOX.md
+  // so the Claude Code process can check it between tool calls.
+  if (queue.draining) {
+    const workspaceDir = run.run?.workspaceDir;
+    if (workspaceDir) {
+      const inboxFile = path.join(workspaceDir, "OPENCLAW_INBOX.md");
+      const timestamp = new Date().toISOString();
+      const entry = `\n---\n[${timestamp}]\n${run.prompt.trim()}\n`;
+      void appendFile(inboxFile, entry, "utf8").catch(() => {
+        // Non-fatal: inbox write failure does not interrupt queueing.
+      });
+    }
+  }
+
   return true;
 }
 

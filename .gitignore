@@ -107,4 +107,5 @@ dist/protocol.schema.json
 
 # Vondi: local state and secrets (NOT committed)
 .openclaw/
+session-state.json
 .env
