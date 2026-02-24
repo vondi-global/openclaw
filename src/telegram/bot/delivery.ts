@@ -95,7 +95,13 @@ export async function deliverReplies(params: {
   };
   for (const reply of replies) {
     const hasMedia = Boolean(reply?.mediaUrl) || (reply?.mediaUrls?.length ?? 0) > 0;
-    if (!reply?.text && !hasMedia) {
+    // Compute telegram buttons early so we can check them in the empty-text guard below.
+    const telegramData = reply.channelData?.telegram as
+      | { buttons?: TelegramInlineButtons }
+      | undefined;
+    const replyMarkup = buildInlineKeyboard(telegramData?.buttons);
+    const hasTelegramButtons = Boolean(telegramData?.buttons?.length);
+    if (!reply?.text && !hasMedia && !hasTelegramButtons) {
       if (reply?.audioAsVoice) {
         logVerbose("telegram reply has audioAsVoice without media/text; skipping");
         continue;
@@ -111,10 +117,6 @@ export async function deliverReplies(params: {
       : reply.mediaUrl
         ? [reply.mediaUrl]
         : [];
-    const telegramData = reply.channelData?.telegram as
-      | { buttons?: TelegramInlineButtons }
-      | undefined;
-    const replyMarkup = buildInlineKeyboard(telegramData?.buttons);
     if (mediaList.length === 0) {
       const chunks = chunkText(reply.text || "");
       let sentTextChunk = false;
@@ -133,6 +135,20 @@ export async function deliverReplies(params: {
           plainText: chunk.text,
           linkPreview,
           replyMarkup: shouldAttachButtons ? replyMarkup : undefined,
+        });
+        sentTextChunk = true;
+        markDelivered();
+      }
+      // Text was empty but buttons are present — send a single button-only message.
+      if (!sentTextChunk && replyMarkup) {
+        await sendTelegramText(bot, chatId, "\u200B", runtime, {
+          replyToMessageId: replyToMessageIdForPayload,
+          replyQuoteText,
+          thread,
+          textMode: "html",
+          plainText: "\u200B",
+          linkPreview: false,
+          replyMarkup,
         });
         sentTextChunk = true;
         markDelivered();
