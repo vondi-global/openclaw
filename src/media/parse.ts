@@ -251,11 +251,9 @@ export function splitMediaFromOutput(raw: string): {
   };
 }
 
-// Regex: matches BUTTONS: followed by JSON array on one or multiple lines.
-// Supports both single-row [[{...}]] and multi-row [[[...],[...]]] formats.
-// The token must appear at the start of a line (after optional whitespace).
-export const BUTTONS_TOKEN_RE =
-  /^[ \t]*BUTTONS:\s*([\s\S]*?)(?=\n[ \t]*(?:BUTTONS:|MEDIA:|$)|\s*$)/gim;
+// Regex: matches BUTTONS: token (word boundary, case-insensitive) anywhere in text.
+// Supports both single-row [{...}] and multi-row [[{...}],[{...}]] formats.
+export const BUTTONS_TOKEN_RE = /\bBUTTONS:\s*/gi;
 
 function isValidButtonRow(row: unknown): row is TelegramInlineButton[] {
   if (!Array.isArray(row) || row.length === 0) {
@@ -311,8 +309,9 @@ export function splitButtonsFromOutput(raw: string): {
   const fenceSpans = parseFenceSpans(trimmedRaw);
   const lines = trimmedRaw.split("\n");
 
-  // Find BUTTONS: blocks: collect lines starting with BUTTONS: plus following JSON lines
-  const removedRanges: Array<{ start: number; end: number }> = [];
+  // Find BUTTONS: anywhere in a line (not just at line start), collect multi-line JSON.
+  // Text before BUTTONS: on the same line is preserved as output text.
+  const outputLines: string[] = [];
   let buttons: TelegramInlineButtons | undefined;
 
   let i = 0;
@@ -320,19 +319,25 @@ export function splitButtonsFromOutput(raw: string): {
   while (i < lines.length) {
     const line = lines[i];
 
-    if (!isInsideFence(fenceSpans, lineOffset) && /^[ \t]*BUTTONS:/i.test(line)) {
-      const blockStart = i;
-      // Collect JSON: the payload may continue on subsequent lines until blank line or next directive
-      const jsonLines: string[] = [line.replace(/^[ \t]*BUTTONS:/i, "").trim()];
+    const buttonsMatch = !isInsideFence(fenceSpans, lineOffset)
+      ? /\bBUTTONS:\s*/i.exec(line)
+      : null;
+
+    if (buttonsMatch) {
+      const textBefore = line.slice(0, buttonsMatch.index).trimEnd();
+      const jsonStart = line.slice(buttonsMatch.index + buttonsMatch[0].length).trim();
+
+      // Collect JSON: may continue on subsequent lines until blank line or next directive
+      const jsonLines: string[] = [jsonStart];
       let j = i + 1;
       while (j < lines.length) {
         const nextLine = lines[j];
-        if (/^[ \t]*(?:BUTTONS:|MEDIA:)/i.test(nextLine)) {
-          break;
-        } // next directive
+        if (/\bBUTTONS:/i.test(nextLine) || /\bMEDIA:/i.test(nextLine)) {
+          break; // next directive
+        }
         if (nextLine.trim() === "" && jsonLines.join("").trim().endsWith("]")) {
-          break;
-        } // end of JSON
+          break; // end of JSON block
+        }
         jsonLines.push(nextLine);
         j++;
       }
@@ -340,28 +345,28 @@ export function splitButtonsFromOutput(raw: string): {
       const parsed = parseButtonsJson(jsonStr);
       if (parsed) {
         if (!buttons) {
-          buttons = parsed;
-        } // use first valid BUTTONS block
-        removedRanges.push({ start: blockStart, end: j - 1 });
+          buttons = parsed; // use first valid BUTTONS block
+        }
+        // Keep any text that appeared before BUTTONS: on the same line
+        if (textBefore) {
+          outputLines.push(textBefore);
+        }
         i = j;
         lineOffset = lines.slice(0, j).reduce((acc, l) => acc + l.length + 1, 0);
         continue;
       }
     }
 
+    outputLines.push(line);
     lineOffset += line.length + 1;
     i++;
   }
 
-  if (removedRanges.length === 0) {
+  if (!buttons) {
     return { text: trimmedRaw };
   }
 
-  const keptLines = lines.filter((_, idx) =>
-    removedRanges.every((r) => idx < r.start || idx > r.end),
-  );
-
-  const cleanedText = keptLines
+  const cleanedText = outputLines
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
