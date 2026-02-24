@@ -6,6 +6,21 @@ metadata: { "openclaw": { "emoji": "⚙️", "requires": { "bins": ["kubectl", "
 
 # Vondi Infrastructure
 
+## АБСОЛЮТНЫЙ ЗАПРЕТ: НЕ перезапускать openclaw-gateway
+
+**НИКОГДА не выполнять:**
+
+```bash
+sudo supervisorctl restart tools:openclaw-gateway
+sudo supervisorctl stop tools:openclaw-gateway
+```
+
+**Причина:** openclaw-gateway — это сам бот, из которого ты работаешь.
+Перезапуск убивает текущий Claude subprocess → ответ в Telegram никогда не приходит.
+Пользователь думает что завис, перезапускает вручную — и бот нестабилен.
+
+**Если нужно перезапустить openclaw** — сообщи пользователю, что это нужно сделать ВРУЧНУЮ с компьютера.
+
 ## Production Kubernetes (vondi.rs, 62.169.20.78)
 
 ```bash
