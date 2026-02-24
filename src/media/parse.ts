@@ -1,6 +1,7 @@
-// Shared helpers for parsing MEDIA tokens from command/stdout text.
+// Shared helpers for parsing MEDIA/BUTTONS tokens from command/stdout text.
 
 import { parseFenceSpans } from "../markdown/fences.js";
+import type { TelegramInlineButton, TelegramInlineButtons } from "../telegram/button-types.js";
 import { parseAudioTag } from "./audio-tags.js";
 
 // Allow optional wrapping backticks and punctuation after the token; capture the core token.
@@ -248,4 +249,122 @@ export function splitMediaFromOutput(raw: string): {
     mediaUrl: media[0],
     ...(hasAudioAsVoice ? { audioAsVoice: true } : {}),
   };
+}
+
+// Regex: matches BUTTONS: followed by JSON array on one or multiple lines.
+// Supports both single-row [[{...}]] and multi-row [[[...],[...]]] formats.
+// The token must appear at the start of a line (after optional whitespace).
+export const BUTTONS_TOKEN_RE =
+  /^[ \t]*BUTTONS:\s*([\s\S]*?)(?=\n[ \t]*(?:BUTTONS:|MEDIA:|$)|\s*$)/gim;
+
+function isValidButtonRow(row: unknown): row is TelegramInlineButton[] {
+  if (!Array.isArray(row) || row.length === 0) {
+    return false;
+  }
+  return row.every(
+    (btn) =>
+      btn &&
+      typeof btn === "object" &&
+      typeof (btn as TelegramInlineButton).text === "string" &&
+      (btn as TelegramInlineButton).text.trim().length > 0 &&
+      typeof (btn as TelegramInlineButton).callback_data === "string" &&
+      (btn as TelegramInlineButton).callback_data.trim().length > 0 &&
+      Buffer.byteLength((btn as TelegramInlineButton).callback_data.trim(), "utf8") <= 64,
+  );
+}
+
+function parseButtonsJson(raw: string): TelegramInlineButtons | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    return undefined;
+  }
+  // Detect format: [[{btn}, {btn}], [{btn}]] (array of rows) vs [{btn}, {btn}] (single row)
+  const isMultiRow = Array.isArray(parsed[0]);
+  const rows: TelegramInlineButton[][] = isMultiRow
+    ? (parsed as unknown[][]).map((r) => r as TelegramInlineButton[])
+    : [parsed as TelegramInlineButton[]];
+  const validRows = rows.filter(isValidButtonRow);
+  if (validRows.length === 0) {
+    return undefined;
+  }
+  return validRows;
+}
+
+export function splitButtonsFromOutput(raw: string): {
+  text: string;
+  telegramButtons?: TelegramInlineButtons;
+} {
+  const trimmedRaw = raw.trimEnd();
+  if (!trimmedRaw.trim()) {
+    return { text: "" };
+  }
+
+  const fenceSpans = parseFenceSpans(trimmedRaw);
+  const lines = trimmedRaw.split("\n");
+
+  // Find BUTTONS: blocks: collect lines starting with BUTTONS: plus following JSON lines
+  const removedRanges: Array<{ start: number; end: number }> = [];
+  let buttons: TelegramInlineButtons | undefined;
+
+  let i = 0;
+  let lineOffset = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (!isInsideFence(fenceSpans, lineOffset) && /^[ \t]*BUTTONS:/i.test(line)) {
+      const blockStart = i;
+      // Collect JSON: the payload may continue on subsequent lines until blank line or next directive
+      const jsonLines: string[] = [line.replace(/^[ \t]*BUTTONS:/i, "").trim()];
+      let j = i + 1;
+      while (j < lines.length) {
+        const nextLine = lines[j];
+        if (/^[ \t]*(?:BUTTONS:|MEDIA:)/i.test(nextLine)) {
+          break;
+        } // next directive
+        if (nextLine.trim() === "" && jsonLines.join("").trim().endsWith("]")) {
+          break;
+        } // end of JSON
+        jsonLines.push(nextLine);
+        j++;
+      }
+      const jsonStr = jsonLines.join("\n").trim();
+      const parsed = parseButtonsJson(jsonStr);
+      if (parsed) {
+        if (!buttons) {
+          buttons = parsed;
+        } // use first valid BUTTONS block
+        removedRanges.push({ start: blockStart, end: j - 1 });
+        i = j;
+        lineOffset = lines.slice(0, j).reduce((acc, l) => acc + l.length + 1, 0);
+        continue;
+      }
+    }
+
+    lineOffset += line.length + 1;
+    i++;
+  }
+
+  if (removedRanges.length === 0) {
+    return { text: trimmedRaw };
+  }
+
+  const keptLines = lines.filter((_, idx) =>
+    removedRanges.every((r) => idx < r.start || idx > r.end),
+  );
+
+  const cleanedText = keptLines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return { text: cleanedText, telegramButtons: buttons };
 }

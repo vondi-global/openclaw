@@ -50,6 +50,10 @@ export async function runCliAgent(params: {
   ownerNumbers?: string[];
   cliSessionId?: string;
   images?: ImageContent[];
+  /** Called every thinkingHeartbeatIntervalMs while the CLI subprocess is running. */
+  onThinkingHeartbeat?: (elapsedMs: number) => Promise<void> | void;
+  /** Interval between heartbeat calls in ms. Default: 5 minutes. */
+  thinkingHeartbeatIntervalMs?: number;
 }): Promise<EmbeddedPiRunResult> {
   const started = Date.now();
   const workspaceResolution = resolveRunWorkspaceDir({
@@ -251,7 +255,28 @@ export async function runCliAgent(params: {
         env,
         input: stdinPayload,
       });
-      const result = await managedRun.wait();
+
+      // Thinking heartbeat: notify caller periodically while the CLI subprocess runs.
+      const heartbeatIntervalMs = params.thinkingHeartbeatIntervalMs ?? 5 * 60 * 1000;
+      let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+      if (params.onThinkingHeartbeat) {
+        const onHeartbeat = params.onThinkingHeartbeat;
+        const spawnedAt = managedRun.startedAtMs;
+        heartbeatTimer = setInterval(() => {
+          const elapsedMs = Date.now() - spawnedAt;
+          void Promise.resolve(onHeartbeat(elapsedMs)).catch(() => {});
+        }, heartbeatIntervalMs);
+      }
+
+      let result: Awaited<ReturnType<typeof managedRun.wait>>;
+      try {
+        result = await managedRun.wait();
+      } finally {
+        if (heartbeatTimer !== null) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
+      }
 
       const stdout = result.stdout.trim();
       const stderr = result.stderr.trim();

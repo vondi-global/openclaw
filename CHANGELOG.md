@@ -2642,3 +2642,14 @@ Thanks @AlexMikhalev, @CoreyH, @John-Rood, @KrauseFx, @MaudeBot, @Nachx639, @Nic
 - Discord: avoid duplicate replies when OpenAI emits repeated `message_end` events.
 - Commands: unify /status (inline) and command auth across providers; group bypass for authorized control commands; remove Discord /clawd slash handler.
 - CLI: run `openclaw agent` via the Gateway by default; use `--local` to force embedded mode.
+
+## [Vondi] 2026-02-22 — Forked for Vondi Global
+
+### Changed
+
+- Forked openclaw/openclaw to vondi-global/openclaw
+- Replaced upstream CI workflows with vondi self-hosted runner configuration
+- Added vondi-specific skills: vondi-marketplace, vondi-infra, vondi-db, vondi-mail
+- Added scripts/vondi-start.sh for Supervisor-managed gateway
+- Added Supervisor integration (tools:openclaw-gateway, autostart=false)
+- State directory moved to .openclaw/ (gitignored)

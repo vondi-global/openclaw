@@ -104,3 +104,7 @@ apps/ios/LocalSigning.xcconfig
 # Generated protocol schema (produced via pnpm protocol:gen)
 dist/protocol.schema.json
 .ant-colony/
+
+# Vondi: local state and secrets (NOT committed)
+.openclaw/
+.env

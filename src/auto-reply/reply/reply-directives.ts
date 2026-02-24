@@ -1,4 +1,5 @@
-import { splitMediaFromOutput } from "../../media/parse.js";
+import { splitButtonsFromOutput, splitMediaFromOutput } from "../../media/parse.js";
+import type { TelegramInlineButtons } from "../../telegram/button-types.js";
 import { parseInlineDirectives } from "../../utils/directive-tags.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../tokens.js";
 
@@ -11,13 +12,15 @@ export type ReplyDirectiveParseResult = {
   replyToTag: boolean;
   audioAsVoice?: boolean;
   isSilent: boolean;
+  telegramButtons?: TelegramInlineButtons;
 };
 
 export function parseReplyDirectives(
   raw: string,
   options: { currentMessageId?: string; silentToken?: string } = {},
 ): ReplyDirectiveParseResult {
-  const split = splitMediaFromOutput(raw);
+  const buttonsSplit = splitButtonsFromOutput(raw);
+  const split = splitMediaFromOutput(buttonsSplit.text);
   let text = split.text ?? "";
 
   const replyParsed = parseInlineDirectives(text, {
@@ -45,5 +48,6 @@ export function parseReplyDirectives(
     replyToTag: replyParsed.hasReplyTag,
     audioAsVoice: split.audioAsVoice,
     isSilent,
+    telegramButtons: buttonsSplit.telegramButtons,
   };
 }

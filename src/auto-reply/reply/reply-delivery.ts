@@ -25,6 +25,7 @@ export function normalizeReplyPayloadDirectives(params: {
     (parseMode === "auto" &&
       (sourceText.includes("[[") ||
         sourceText.includes("MEDIA:") ||
+        sourceText.includes("BUTTONS:") ||
         sourceText.includes(silentToken)));
 
   const parsed = shouldParse
@@ -42,6 +43,18 @@ export function normalizeReplyPayloadDirectives(params: {
   const mediaUrls = params.payload.mediaUrls ?? parsed?.mediaUrls;
   const mediaUrl = params.payload.mediaUrl ?? parsed?.mediaUrl ?? mediaUrls?.[0];
 
+  // Merge parsed telegramButtons into channelData.telegram (only if not already set)
+  const existingChannelData = params.payload.channelData ?? {};
+  const existingTelegram =
+    (existingChannelData.telegram as Record<string, unknown> | undefined) ?? {};
+  const channelData =
+    parsed?.telegramButtons && !existingTelegram.buttons
+      ? {
+          ...existingChannelData,
+          telegram: { ...existingTelegram, buttons: parsed.telegramButtons },
+        }
+      : existingChannelData;
+
   return {
     payload: {
       ...params.payload,
@@ -52,6 +65,7 @@ export function normalizeReplyPayloadDirectives(params: {
       replyToTag: params.payload.replyToTag || parsed?.replyToTag,
       replyToCurrent: params.payload.replyToCurrent || parsed?.replyToCurrent,
       audioAsVoice: Boolean(params.payload.audioAsVoice || parsed?.audioAsVoice),
+      channelData,
     },
     isSilent: parsed?.isSilent ?? false,
   };

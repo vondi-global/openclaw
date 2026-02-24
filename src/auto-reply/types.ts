@@ -53,6 +53,14 @@ export type GetReplyOptions = {
   hasRepliedRef?: { value: boolean };
   /** Override agent timeout in seconds (0 = no timeout). Threads through to resolveAgentTimeoutMs. */
   timeoutOverrideSeconds?: number;
+  /**
+   * Called periodically during long CLI (claude-cli) runs to signal the user that the agent is
+   * still working. elapsedMs is time since the CLI subprocess was started.
+   * Only fires for CLI providers (not embedded pi), not during heartbeat runs.
+   */
+  onThinkingHeartbeat?: (elapsedMs: number) => Promise<void> | void;
+  /** Interval between thinking heartbeat calls in ms. Default: 5 minutes. */
+  thinkingHeartbeatIntervalMs?: number;
 };
 
 export type ReplyPayload = {

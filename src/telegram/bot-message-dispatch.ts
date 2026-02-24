@@ -31,7 +31,7 @@ import {
   createTelegramReasoningStepState,
   splitTelegramReasoningText,
 } from "./reasoning-lane-coordinator.js";
-import { editMessageTelegram } from "./send.js";
+import { editMessageTelegram, sendMessageTelegram } from "./send.js";
 import { cacheSticker, describeStickerImage } from "./sticker-cache.js";
 
 const EMPTY_RESPONSE_FALLBACK = "No response generated. Please try again.";
@@ -742,6 +742,19 @@ export const dispatchTelegramMessage = async ({
             }
           : undefined,
         onModelSelected,
+        onThinkingHeartbeat: async (elapsedMs: number) => {
+          const mins = Math.round(elapsedMs / 60000);
+          const text =
+            mins <= 1 ? "Думаю... ещё немного." : `Думаю уже ${mins} мин, ещё работаю...`;
+          try {
+            await sendMessageTelegram(String(chatId), text, {
+              accountId: route.accountId,
+              silent: true,
+            });
+          } catch {
+            // Heartbeat send failure is non-fatal — don't interrupt the agent run.
+          }
+        },
       },
     }));
   } finally {
