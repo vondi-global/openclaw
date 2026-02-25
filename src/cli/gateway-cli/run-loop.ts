@@ -2,6 +2,11 @@ import type { startGatewayServer } from "../../gateway/server.js";
 import { acquireGatewayLock } from "../../infra/gateway-lock.js";
 import { restartGatewayProcessWithFreshPid } from "../../infra/process-respawn.js";
 import {
+  loadAndClearRestartHandoff,
+  replayHandoffQueues,
+  saveRestartHandoff,
+} from "../../infra/restart-handoff.js";
+import {
   consumeGatewaySigusr1RestartAuthorization,
   isGatewaySigusr1RestartExternallyAllowed,
   markGatewaySigusr1RestartHandled,
@@ -124,6 +129,12 @@ export async function runGatewayLoop(params: {
           }
         }
 
+        // Persist pending followup queue items before tearing down so they
+        // can be replayed after the gateway comes back up. Called synchronously
+        // (writeFileSync internally) to guarantee the file is flushed before
+        // the process exits or the server socket closes.
+        saveRestartHandoff();
+
         await server?.close({
           reason: isRestart ? "gateway restarting" : "gateway stopping",
           restartExpectedMs: isRestart ? 1500 : null,
@@ -184,6 +195,17 @@ export async function runGatewayLoop(params: {
     while (true) {
       onIteration();
       server = await params.start();
+
+      // After the server is ready, check for a handoff file written by the
+      // previous gateway process. We delay replay by 2 s so the server has
+      // time to fully initialise its channels before we submit messages.
+      const handoff = loadAndClearRestartHandoff();
+      if (handoff) {
+        setTimeout(() => {
+          void replayHandoffQueues(handoff);
+        }, 2_000);
+      }
+
       await new Promise<void>((resolve) => {
         restartResolver = resolve;
       });
