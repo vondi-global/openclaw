@@ -767,6 +767,13 @@ export async function runCronIsolatedAgentTurn(params: {
           endedAt: runEndedAt,
           outcome: { status: "ok" },
           announceType: "cron job",
+          // Cron jobs run at scheduled times when the main session is typically
+          // not active. Without this flag, text delivery goes through
+          // callGateway({method:"agent"}) which requires an active session and
+          // fails silently at e.g. 08:00. With expectsCompletionMessage:true,
+          // sendSubagentAnnounceDirectly uses callGateway({method:"send"})
+          // directly — no active session required.
+          expectsCompletionMessage: true,
         });
         if (didAnnounce) {
           delivered = true;
