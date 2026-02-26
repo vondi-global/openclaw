@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { abortEmbeddedPiRun } from "../../agents/pi-embedded.js";
 import { parseDurationMs } from "../../cli/parse-duration.js";
 import { isRestartEnabled } from "../../config/commands.js";
@@ -469,6 +470,126 @@ export const handleRestartCommand: CommandHandler = async (params, allowTextComm
     shouldContinue: false,
     reply: {
       text: `⚙️ Restarting OpenClaw via ${restartMethod.method}; give me a few seconds to come back online.`,
+    },
+  };
+};
+
+function resolveRefreshScriptPath(): string {
+  // Path relative to this process's location (works both in dev and prod)
+  const openclawhome = process.env.OPENCLAW_HOME ?? process.cwd();
+  return `${openclawhome}/scripts/claude-token-refresh.py`;
+}
+
+function resolveClaudeAuthLoginScript(): string {
+  const openclawhome = process.env.OPENCLAW_HOME ?? process.cwd();
+  return `${openclawhome}/scripts/vondi-claude-refresh.sh`;
+}
+
+function tryOAuthRefresh(): { ok: boolean; message: string } {
+  const scriptPath = resolveRefreshScriptPath();
+  const result = spawnSync("python3", [scriptPath], {
+    encoding: "utf-8",
+    timeout: 35000,
+    env: { ...process.env, CLAUDECODE: "" },
+  });
+  const output = (result.stdout || "").trim() || (result.stderr || "").trim();
+  if (result.status === 0) {
+    return { ok: true, message: output };
+  }
+  return { ok: false, message: output || `Exit code ${result.status}` };
+}
+
+function generateAuthLink(): { url: string } | null {
+  // Spawn claude auth login and capture the URL from stdout
+  const env = { ...process.env, CLAUDECODE: "" };
+  const result = spawnSync("claude", ["auth", "login"], {
+    encoding: "utf-8",
+    timeout: 8000,
+    env,
+  });
+  const output = (result.stdout || "") + (result.stderr || "");
+  const match = output.match(/https:\/\/claude\.ai\/oauth\/authorize[^\s]+/);
+  return match ? { url: match[0] } : null;
+}
+
+export const handleReauthCommand: CommandHandler = async (params, allowTextCommands) => {
+  if (!allowTextCommands) {
+    return null;
+  }
+  if (params.command.commandBodyNormalized !== "/reauth") {
+    return null;
+  }
+  if (!params.command.isAuthorizedSender) {
+    logVerbose(
+      `Ignoring /reauth from unauthorized sender: ${params.command.senderId || "<unknown>"}`,
+    );
+    return { shouldContinue: false };
+  }
+
+  // Step 1: Try OAuth token refresh (uses refresh_token, no browser needed)
+  const refresh = tryOAuthRefresh();
+
+  if (refresh.ok) {
+    // Token refreshed or was already valid — restart OpenClaw to pick up new token
+    const hasSigusr1Listener = process.listenerCount("SIGUSR1") > 0;
+    if (hasSigusr1Listener) {
+      scheduleGatewaySigusr1Restart({ reason: "/reauth" });
+      return {
+        shouldContinue: false,
+        reply: {
+          text: `Токен обновлён. Перезапускаю OpenClaw...`,
+        },
+      };
+    }
+    const restartMethod = triggerOpenClawRestart();
+    if (!restartMethod.ok) {
+      const detail = restartMethod.detail ? ` (${restartMethod.detail})` : "";
+      return {
+        shouldContinue: false,
+        reply: {
+          text: [
+            `Токен обновлён, но автоперезапуск не удался: ${restartMethod.method}${detail}.`,
+            "sudo supervisorctl restart tools:openclaw-gateway",
+          ].join("\n"),
+        },
+      };
+    }
+    return {
+      shouldContinue: false,
+      reply: { text: `Токен обновлён. Перезапускаю OpenClaw (${restartMethod.method})...` },
+    };
+  }
+
+  // Step 2: Refresh token itself is expired — generate new OAuth link automatically
+  logVerbose(`/reauth: token refresh failed: ${refresh.message}`);
+
+  const authLink = generateAuthLink();
+  if (authLink) {
+    return {
+      shouldContinue: false,
+      reply: {
+        text: [
+          "Refresh token истёк. Для повторной авторизации перейди по ссылке (действительна ~5 мин):",
+          "",
+          authLink.url,
+          "",
+          "После авторизации в браузере напиши /reauth снова.",
+        ].join("\n"),
+      },
+    };
+  }
+
+  // Fallback: could not generate link
+  return {
+    shouldContinue: false,
+    reply: {
+      text: [
+        "Не удалось обновить токен автоматически.",
+        "Ошибка: " + refresh.message,
+        "",
+        "Запустите в терминале: claude auth login",
+        "Затем напишите /reauth снова.",
+      ].join("\n"),
     },
   };
 };

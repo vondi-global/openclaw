@@ -462,6 +462,13 @@ function buildChatCommands(): ChatCommandDefinition[] {
       category: "tools",
     }),
     defineChatCommand({
+      key: "reauth",
+      nativeName: "reauth",
+      description: "Check Claude auth status and restart OpenClaw to reload credentials.",
+      textAlias: "/reauth",
+      category: "tools",
+    }),
+    defineChatCommand({
       key: "activation",
       nativeName: "activation",
       description: "Set group activation mode.",
