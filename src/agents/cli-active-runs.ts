@@ -11,11 +11,7 @@ export type CliRunHandle = {
 
 const ACTIVE_CLI_RUNS = new Map<string, CliRunHandle>();
 
-export function registerActiveCliRun(
-  sessionId: string,
-  cancel: () => void,
-  pid?: number,
-): void {
+export function registerActiveCliRun(sessionId: string, cancel: () => void, pid?: number): void {
   ACTIVE_CLI_RUNS.set(sessionId, { cancel, pid, startedAtMs: Date.now() });
 }
 

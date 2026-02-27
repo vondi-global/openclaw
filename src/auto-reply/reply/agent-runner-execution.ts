@@ -9,6 +9,7 @@ import {
   isCompactionFailureError,
   isContextOverflowError,
   isLikelyContextOverflowError,
+  isTimeoutErrorMessage,
   isTransientHttpError,
   sanitizeUserFacingText,
 } from "../../agents/pi-embedded-helpers.js";
@@ -494,6 +495,33 @@ export async function runAgentTurnWithFallback(params: {
             `cli-runner: auth error detected, marking session for fresh start next run: ${params.sessionKey}`,
           );
           activeEntry.lastErrorType = "auth_error";
+          if (params.activeSessionStore && params.storePath) {
+            params.activeSessionStore[params.sessionKey] = activeEntry;
+            await updateSessionStore(params.storePath, (store) => {
+              if (params.sessionKey) {
+                store[params.sessionKey] = activeEntry;
+              }
+            });
+          }
+        }
+      }
+
+      // On watchdog timeout, proactively clear the stored CLI session ID so the next
+      // run starts fresh instead of failing with "No conversation found with session ID".
+      const isTimeoutError = isTimeoutErrorMessage(message);
+      if (isTimeoutError && params.sessionKey) {
+        const activeEntry = params.getActiveSessionEntry();
+        if (
+          activeEntry &&
+          (activeEntry.claudeCliSessionId ?? activeEntry.cliSessionIds?.["claude-cli"])
+        ) {
+          logVerbose(
+            `cli-runner: clearing cli session id after watchdog timeout for session=${params.sessionKey}`,
+          );
+          activeEntry.claudeCliSessionId = undefined;
+          if (activeEntry.cliSessionIds?.["claude-cli"]) {
+            delete activeEntry.cliSessionIds["claude-cli"];
+          }
           if (params.activeSessionStore && params.storePath) {
             params.activeSessionStore[params.sessionKey] = activeEntry;
             await updateSessionStore(params.storePath, (store) => {
