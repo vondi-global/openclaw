@@ -55,12 +55,24 @@ export type GetReplyOptions = {
   timeoutOverrideSeconds?: number;
   /**
    * Called periodically during long CLI (claude-cli) runs to signal the user that the agent is
-   * still working. elapsedMs is time since the CLI subprocess was started.
+   * still working. Carries elapsed time, subprocess PID and limit info.
    * Only fires for CLI providers (not embedded pi), not during heartbeat runs.
    */
-  onThinkingHeartbeat?: (elapsedMs: number) => Promise<void> | void;
+  onThinkingHeartbeat?: (info: ThinkingHeartbeatInfo) => Promise<void> | void;
   /** Interval between thinking heartbeat calls in ms. Default: 5 minutes. */
   thinkingHeartbeatIntervalMs?: number;
+};
+
+/** Info passed to onThinkingHeartbeat callback during long CLI runs. */
+export type ThinkingHeartbeatInfo = {
+  /** Milliseconds since the CLI subprocess was spawned. */
+  elapsedMs: number;
+  /** PID of the CLI subprocess, if available. */
+  pid?: number;
+  /** Absolute session timeout in ms (from maxSessionMs param), if set. */
+  maxSessionMs?: number;
+  /** OpenClaw sessionId for this run. */
+  sessionId?: string;
 };
 
 export type ReplyPayload = {

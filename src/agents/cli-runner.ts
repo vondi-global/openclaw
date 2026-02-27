@@ -1,6 +1,7 @@
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { resolveHeartbeatPrompt } from "../auto-reply/heartbeat.js";
 import type { ThinkLevel } from "../auto-reply/thinking.js";
+import type { ThinkingHeartbeatInfo } from "../auto-reply/types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { shouldLogVerbose } from "../globals.js";
 import { isTruthyEnvValue } from "../infra/env.js";
@@ -8,6 +9,7 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getProcessSupervisor } from "../process/supervisor/index.js";
 import { resolveSessionAgentIds } from "./agent-scope.js";
 import { makeBootstrapWarn, resolveBootstrapContextForRun } from "./bootstrap-files.js";
+import { registerActiveCliRun, unregisterActiveCliRun } from "./cli-active-runs.js";
 import { resolveCliBackendConfig } from "./cli-backends.js";
 import {
   appendImagePathsToPrompt,
@@ -51,9 +53,15 @@ export async function runCliAgent(params: {
   cliSessionId?: string;
   images?: ImageContent[];
   /** Called every thinkingHeartbeatIntervalMs while the CLI subprocess is running. */
-  onThinkingHeartbeat?: (elapsedMs: number) => Promise<void> | void;
+  onThinkingHeartbeat?: (info: ThinkingHeartbeatInfo) => Promise<void> | void;
   /** Interval between heartbeat calls in ms. Default: 5 minutes. */
   thinkingHeartbeatIntervalMs?: number;
+  /**
+   * Absolute maximum duration in ms for this CLI session.
+   * If set, the subprocess is forcibly cancelled after this time regardless of output activity.
+   * Use this to prevent infinite tool-call loops from running forever.
+   */
+  maxSessionMs?: number;
 }): Promise<EmbeddedPiRunResult> {
   const started = Date.now();
   const workspaceResolution = resolveRunWorkspaceDir({
@@ -256,6 +264,26 @@ export async function runCliAgent(params: {
         input: stdinPayload,
       });
 
+      // Register in global CLI run registry so /stop and /kill can actually terminate this subprocess.
+      registerActiveCliRun(
+        params.sessionId,
+        () => managedRun.cancel("manual-cancel"),
+        managedRun.pid,
+      );
+
+      // Absolute session timeout: cancel subprocess after maxSessionMs regardless of output activity.
+      // Prevents infinite tool-call loops from running forever even if stderr keeps the no-output
+      // watchdog from firing.
+      let absoluteTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+      if (typeof params.maxSessionMs === "number" && params.maxSessionMs > 0) {
+        absoluteTimeoutTimer = setTimeout(() => {
+          log.warn(
+            `cli absolute timeout: session=${params.sessionId} maxSessionMs=${params.maxSessionMs} pid=${managedRun.pid ?? "unknown"}`,
+          );
+          managedRun.cancel("overall-timeout");
+        }, params.maxSessionMs);
+      }
+
       // Thinking heartbeat: notify caller periodically while the CLI subprocess runs.
       const heartbeatIntervalMs = params.thinkingHeartbeatIntervalMs ?? 5 * 60 * 1000;
       let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -264,7 +292,13 @@ export async function runCliAgent(params: {
         const spawnedAt = managedRun.startedAtMs;
         heartbeatTimer = setInterval(() => {
           const elapsedMs = Date.now() - spawnedAt;
-          void Promise.resolve(onHeartbeat(elapsedMs)).catch(() => {});
+          const info: ThinkingHeartbeatInfo = {
+            elapsedMs,
+            pid: managedRun.pid,
+            maxSessionMs: params.maxSessionMs,
+            sessionId: params.sessionId,
+          };
+          void Promise.resolve(onHeartbeat(info)).catch(() => {});
         }, heartbeatIntervalMs);
       }
 
@@ -276,6 +310,12 @@ export async function runCliAgent(params: {
           clearInterval(heartbeatTimer);
           heartbeatTimer = null;
         }
+        if (absoluteTimeoutTimer !== null) {
+          clearTimeout(absoluteTimeoutTimer);
+          absoluteTimeoutTimer = null;
+        }
+        // Always unregister from the global CLI run registry.
+        unregisterActiveCliRun(params.sessionId);
       }
 
       const stdout = result.stdout.trim();

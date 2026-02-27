@@ -5,6 +5,7 @@ import { getCliSessionId } from "../../agents/cli-session.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import {
+  isAuthErrorMessage,
   isCompactionFailureError,
   isContextOverflowError,
   isLikelyContextOverflowError,
@@ -191,7 +192,19 @@ export async function runAgentTurnWithFallback(params: {
                 startedAt,
               },
             });
-            const cliSessionId = getCliSessionId(params.getActiveSessionEntry(), provider);
+            const activeEntry = params.getActiveSessionEntry();
+            // If the previous run ended with an auth error, force a fresh session instead of
+            // resuming the potentially broken one. Clear the flag so it only affects this run.
+            let cliSessionId: string | undefined;
+            if (activeEntry?.lastErrorType === "auth_error") {
+              logVerbose(
+                `cli-runner: forcing fresh session after auth_error for session=${params.sessionKey}`,
+              );
+              activeEntry.lastErrorType = undefined;
+              cliSessionId = undefined;
+            } else {
+              cliSessionId = getCliSessionId(activeEntry, provider);
+            }
             return (async () => {
               let lifecycleTerminalEmitted = false;
               try {
@@ -470,6 +483,27 @@ export async function runAgentTurnWithFallback(params: {
       const isSessionCorruption = /function call turn comes immediately after/i.test(message);
       const isRoleOrderingError = /incorrect role information|roles must alternate/i.test(message);
       const isTransientHttp = isTransientHttpError(message);
+      const isAuthError = isAuthErrorMessage(message);
+
+      // Track auth errors on the session entry so the next run forces a fresh CLI session
+      // instead of trying to resume a potentially broken/expired session.
+      if (isAuthError && params.sessionKey) {
+        const activeEntry = params.getActiveSessionEntry();
+        if (activeEntry) {
+          logVerbose(
+            `cli-runner: auth error detected, marking session for fresh start next run: ${params.sessionKey}`,
+          );
+          activeEntry.lastErrorType = "auth_error";
+          if (params.activeSessionStore && params.storePath) {
+            params.activeSessionStore[params.sessionKey] = activeEntry;
+            await updateSessionStore(params.storePath, (store) => {
+              if (params.sessionKey) {
+                store[params.sessionKey] = activeEntry;
+              }
+            });
+          }
+        }
+      }
 
       if (
         isCompactionFailure &&

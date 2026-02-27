@@ -95,6 +95,13 @@ export type SessionEntry = {
   memoryFlushCompactionCount?: number;
   cliSessionIds?: Record<string, string>;
   claudeCliSessionId?: string;
+  /**
+   * Tracks the last error type encountered during an agent run.
+   * Used to decide whether to force a fresh CLI session on the next run
+   * instead of resuming a potentially broken one.
+   * Currently supported value: "auth_error" — forces fresh start on next run.
+   */
+  lastErrorType?: string;
   label?: string;
   displayName?: string;
   channel?: string;

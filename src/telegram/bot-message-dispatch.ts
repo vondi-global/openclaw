@@ -11,7 +11,7 @@ import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import { resolveChunkMode } from "../auto-reply/chunk.js";
 import { clearHistoryEntriesIfEnabled } from "../auto-reply/reply/history.js";
 import { dispatchReplyWithBufferedBlockDispatcher } from "../auto-reply/reply/provider-dispatcher.js";
-import type { ReplyPayload } from "../auto-reply/types.js";
+import type { ReplyPayload, ThinkingHeartbeatInfo } from "../auto-reply/types.js";
 import { removeAckReactionAfterReply } from "../channels/ack-reactions.js";
 import { logAckFailure, logTypingFailure } from "../channels/logging.js";
 import { createReplyPrefixOptions } from "../channels/reply-prefix.js";
@@ -744,8 +744,11 @@ export const dispatchTelegramMessage = async ({
             }
           : undefined,
         onModelSelected,
-        onThinkingHeartbeat: async (elapsedMs: number) => {
+        onThinkingHeartbeat: async (info: ThinkingHeartbeatInfo) => {
+          const { elapsedMs, pid, maxSessionMs } = info;
           const mins = Math.round(elapsedMs / 60000);
+          const pidText = pid ? ` | PID: ${pid}` : "";
+          const limitText = maxSessionMs ? ` | лимит: ${Math.round(maxSessionMs / 60000)} мин` : "";
           let statusSnippet = "";
           try {
             const workspaceDir = resolveAgentWorkspaceDir(cfg, route.agentId);
@@ -765,7 +768,7 @@ export const dispatchTelegramMessage = async ({
           }
           const base =
             mins <= 1 ? "Думаю... ещё немного." : `Думаю уже ${mins} мин, ещё работаю...`;
-          const text = base + statusSnippet;
+          const text = base + pidText + limitText + statusSnippet;
           try {
             await sendMessageTelegram(String(chatId), text, {
               accountId: route.accountId,
