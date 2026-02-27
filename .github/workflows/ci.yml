@@ -75,3 +75,5 @@ jobs:
       - name: Run unit tests
         run: pnpm test:fast
         timeout-minutes: 25
+        env:
+          TMPDIR: ${{ runner.temp }}
