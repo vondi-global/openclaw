@@ -72,6 +72,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Setup tmp dir for tests (k3s noexec /tmp workaround)
+        run: |
+          rm -rf /tmp/openclaw 2>/dev/null || true
+          mkdir -p "$RUNNER_TEMP/openclaw"
+          ln -sf "$RUNNER_TEMP/openclaw" /tmp/openclaw
+
       - name: Run unit tests
         run: pnpm test:fast
         timeout-minutes: 25
