@@ -485,11 +485,6 @@ function resolveRefreshScriptPath(): string {
   return `${openclawhome}/scripts/claude-token-refresh.py`;
 }
 
-function resolveClaudeAuthLoginScript(): string {
-  const openclawhome = process.env.OPENCLAW_HOME ?? process.cwd();
-  return `${openclawhome}/scripts/vondi-claude-refresh.sh`;
-}
-
 function tryOAuthRefresh(): { ok: boolean; message: string } {
   const scriptPath = resolveRefreshScriptPath();
   const result = spawnSync("python3", [scriptPath], {
