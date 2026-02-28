@@ -607,6 +607,7 @@ const ERROR_PATTERNS = {
     /\b403\b/,
     "no credentials found",
     "no api key found",
+    /no conversation found with session id/i,
   ],
   format: [
     "string should match pattern",

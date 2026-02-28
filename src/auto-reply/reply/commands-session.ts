@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { cancelActiveCliRun } from "../../agents/cli-active-runs.js";
 import { abortEmbeddedPiRun } from "../../agents/pi-embedded.js";
 import { parseDurationMs } from "../../cli/parse-duration.js";
 import { isRestartEnabled } from "../../config/commands.js";
@@ -103,7 +104,11 @@ async function applyAbortTarget(params: {
 }) {
   const { abortTarget } = params;
   if (abortTarget.sessionId) {
+    // Abort embedded Pi run (no-op for CLI sessions, but harmless to call).
     abortEmbeddedPiRun(abortTarget.sessionId);
+    // Also cancel any active CLI subprocess for this session.
+    // This fixes the case where /stop had no effect on CLI-backed runs.
+    cancelActiveCliRun(abortTarget.sessionId);
   }
   if (abortTarget.entry && params.sessionStore && abortTarget.key) {
     abortTarget.entry.abortedLastRun = true;
@@ -480,11 +485,6 @@ function resolveRefreshScriptPath(): string {
   return `${openclawhome}/scripts/claude-token-refresh.py`;
 }
 
-function resolveClaudeAuthLoginScript(): string {
-  const openclawhome = process.env.OPENCLAW_HOME ?? process.cwd();
-  return `${openclawhome}/scripts/vondi-claude-refresh.sh`;
-}
-
 function tryOAuthRefresh(): { ok: boolean; message: string } {
   const scriptPath = resolveRefreshScriptPath();
   const result = spawnSync("python3", [scriptPath], {
@@ -668,4 +668,42 @@ export const handleAbortTrigger: CommandHandler = async (params, allowTextComman
     abortKey: params.command.abortKey,
   });
   return { shouldContinue: false, reply: { text: "⚙️ Agent was aborted." } };
+};
+
+/**
+ * /kill (without arguments) — immediately kills the active CLI subprocess for the current session.
+ * Unlike /stop, this does NOT set abortedLastRun, so the next message will be processed normally.
+ * Must be registered BEFORE handleSubagentsCommand in the handler chain so that bare "/kill"
+ * is intercepted here, while "/kill <id>" continues to be handled by the subagents handler.
+ */
+export const handleKillCurrentCommand: CommandHandler = async (params, allowTextCommands) => {
+  if (!allowTextCommands) {
+    return null;
+  }
+  const normalized = params.command.commandBodyNormalized;
+  // Only handle bare "/kill" — "/kill <something>" is for subagents
+  if (normalized !== "/kill") {
+    return null;
+  }
+  if (!params.command.isAuthorizedSender) {
+    logVerbose(
+      `Ignoring /kill from unauthorized sender: ${params.command.senderId || "<unknown>"}`,
+    );
+    return { shouldContinue: false };
+  }
+  const sessionId = params.sessionEntry?.sessionId;
+  if (!sessionId) {
+    return { shouldContinue: false, reply: { text: "No active session to kill." } };
+  }
+  const killed = cancelActiveCliRun(sessionId);
+  if (!killed) {
+    return {
+      shouldContinue: false,
+      reply: { text: "No active CLI subprocess found for this session." },
+    };
+  }
+  return {
+    shouldContinue: false,
+    reply: { text: "CLI subprocess killed. Session continues normally." },
+  };
 };

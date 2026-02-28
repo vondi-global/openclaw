@@ -22,6 +22,7 @@ import { handlePluginCommand } from "./commands-plugin.js";
 import {
   handleAbortTrigger,
   handleActivationCommand,
+  handleKillCurrentCommand,
   handleReauthCommand,
   handleRestartCommand,
   handleSessionCommand,
@@ -61,6 +62,10 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
       handleContextCommand,
       handleExportSessionCommand,
       handleWhoamiCommand,
+      // handleKillCurrentCommand must come before handleSubagentsCommand so that bare "/kill"
+      // (without args) terminates the current session's CLI subprocess, while "/kill <id>"
+      // continues to be routed to the subagents handler.
+      handleKillCurrentCommand,
       handleSubagentsCommand,
       handleConfigCommand,
       handleDebugCommand,
